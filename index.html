@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ふつうのダンジョン（試作）</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <header id="hud">
+    <div class="hud-row">
+      <span class="chip" id="hud-floor">1F／5F</span>
+      <span class="chip" id="hud-lv"><span id="hud-lv-text">Lv 1</span><span class="xpbar"><span id="xp-fill"></span></span></span>
+      <span class="chip" id="hud-atk">攻撃 4</span>
+      <button type="button" id="btn-settings">せってい</button>
+    </div>
+    <div class="hud-row">
+      <div class="meter" id="m-hp">
+        <span class="meter-label">体力</span>
+        <span class="bar"><span class="fill" id="hp-fill"></span></span>
+        <span class="meter-num" id="hp-num">25/25</span>
+      </div>
+      <div class="meter" id="m-food">
+        <span class="meter-label">満腹度</span>
+        <span class="bar"><span class="fill" id="food-fill"></span></span>
+        <span class="meter-num" id="food-num">50/100</span>
+      </div>
+    </div>
+  </header>
+
+  <main id="stage">
+    <canvas id="map" aria-label="ダンジョンの地図"></canvas>
+    <div id="banner" hidden></div>
+  </main>
+
+  <section id="log" aria-live="polite"></section>
+
+  <section id="inv" aria-label="持ち物"></section>
+
+  <section id="itemrow">
+    <span id="item-name"></span>
+    <button type="button" id="btn-use">使う</button>
+    <button type="button" id="btn-throw">投げる</button>
+    <button type="button" id="btn-cancel">やめる</button>
+  </section>
+
+  <section id="controls">
+    <button type="button" id="btn-attack" disabled>
+      <span class="attack-word">こうげき</span>
+      <span id="attack-target"></span>
+    </button>
+    <div id="dpad"></div>
+  </section>
+</div>
+
+<div id="settings" class="overlay" hidden>
+  <div class="panel">
+    <h2>せってい</h2>
+    <div class="set-row">
+      <span class="set-label">音</span>
+      <button type="button" id="btn-sound">オン</button>
+      <input type="range" id="vol" min="0" max="100" step="5" aria-label="音量">
+      <span id="vol-num">30</span>
+    </div>
+    <div class="set-row">
+      <span class="set-label">画面のゆれ</span>
+      <button type="button" class="shake-opt" data-shake="normal">ふつう</button>
+      <button type="button" class="shake-opt" data-shake="weak">よわい</button>
+      <button type="button" class="shake-opt" data-shake="off">なし</button>
+    </div>
+    <div class="set-keys" id="keys-help">
+      <div>キーボード</div>
+      <div>うごく：やじるし／テンキー／Q W E・A D・Z X C</div>
+      <div>こうげき：スペース　　待つ：S</div>
+      <div>持ち物：1〜8 でえらぶ → Enter で使う／T で投げる</div>
+    </div>
+    <div class="set-seed" id="seed-line"></div>
+    <button type="button" id="btn-close-settings" class="primary">とじる</button>
+  </div>
+</div>
+
+<div id="end" class="overlay" hidden>
+  <div class="panel">
+    <h2 id="end-title"></h2>
+    <div id="end-cause"></div>
+    <div id="end-stats"></div>
+    <div id="end-left"></div>
+    <button type="button" id="btn-retry" class="primary">もういちど</button>
+    <div class="set-seed" id="end-seed"></div>
+  </div>
+</div>
+
+<script src="sim.js"></script>
+<script src="bots.js"></script>
+<script src="audio.js"></script>
+<script src="ui.js"></script>
+</body>
+</html>
