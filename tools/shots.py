@@ -5,6 +5,7 @@
 - 文字の検査をする：小さすぎる文字／文字どうしの重なり／枠からのはみ出し／途中で切れている文字。
   「見えている範囲だけ」を数える（display:none、透明、別の画面の下に隠れている文字は数えない）。
 - ?auto=1 の自動プレイが最後まで進むこと、?auto=1 / ?mute=1 で音が鳴り始めないことも見る。
+- ボタン設定（キーコンフィグ）：変えたキーで実際に操作できること、重なったときの扱い、保存、既定値に戻すことも見る。
 
 実行:  ~/workspace/.venv-pw/bin/python tools/shots.py
 結果:  screenshots/*.png と screenshots/check.json。問題があれば終了コード 1。
@@ -134,6 +135,7 @@ class Run:
         self.shots = []
         self.notes = []
         self.vscroll = {}
+        self.cycle = {}  # 「持ち物」キーの送りの確認（view ごと）
 
     def check(self, page, view, scene):
         res = page.evaluate(CHECK_JS)
@@ -212,6 +214,18 @@ def scenario(browser, view, cfg, run, full=True):
                 page.click("#btn-settings")
                 run.shot(page, view, "08-settings")
                 page.click("#btn-close-settings")
+        if full and view not in run.cycle and len(st.get("inv") or []) >= 2 and not st.get("over"):
+            # 「持ち物」キー（既定 I）：押すたびに次の持ち物へ。最後の次は最初。「やめる」（Esc）で外れる。
+            n = len(st["inv"])
+            seq = []
+            for _ in range(n + 1):
+                page.keyboard.press("KeyI")
+                seq.append(page.evaluate("window.__game.sel"))
+            page.keyboard.press("Escape")
+            seq.append(page.evaluate("window.__game.sel"))
+            run.cycle[view] = {"items": n, "ok": seq == list(range(n)) + [0, -1]}
+            if not run.cycle[view]["ok"]:
+                run.notes.append(f"[{view}] 「持ち物」キーの送りがおかしい: {seq}")
         if st.get("floor") and st["floor"] >= 3 and "floor3" not in floor_shots:
             floor_shots.add("floor3")
             run.shot(page, view, "09-floor3")
@@ -227,6 +241,8 @@ def scenario(browser, view, cfg, run, full=True):
                 run.notes.append(f"[{view}] 場面 {key} が起きなかった")
         if not did_menu:
             run.notes.append(f"[{view}] 持ち物メニューの場面が撮れなかった")
+        if view not in run.cycle:
+            run.notes.append(f"[{view}] 「持ち物」キーの送り（持ち物2個以上）を確かめる場面が来なかった")
     ctx.close()
 
 
@@ -253,7 +269,15 @@ def death_scenario(browser, view, cfg, run):
     again = page.evaluate("() => ({ over: window.__game.state.over, floor: window.__game.state.floor, inv: window.__game.state.player.inv.length, end: document.getElementById('end').hidden })")
     if again != {"over": None, "floor": 1, "inv": 0, "end": True}:
         run.notes.append(f"[{view}] もういちど のあとの状態がおかしい: {again}")
+    # ?seed=N の決まり（README に書いてある動き）：「もういちど」で N+1、再読込で N に戻る
+    seeds = {"url": 5, "after_retry": page.evaluate("window.__game.state.seed")}
+    page.reload()
+    page.wait_for_function("window.__game && window.__game.state")
+    seeds["after_reload"] = page.evaluate("window.__game.state.seed")
+    if seeds != {"url": 5, "after_retry": 6, "after_reload": 5}:
+        run.notes.append(f"[{view}] seed の動きが README と違う: {seeds}")
     ctx.close()
+    return seeds
 
 
 def manual_scenario(browser, view, cfg, run):
@@ -302,6 +326,251 @@ def manual_scenario(browser, view, cfg, run):
     page.evaluate("window.__game.flush()")
     after = page.evaluate("() => { const p = window.__game.state.player; return [p.x, p.y, window.__game.state.turn]; }")
     res["keyboard_turns"] = after[2] - before[2]
+    ctx.close()
+    return res
+
+
+def keys_scenario(browser, view, cfg, run):
+    """ボタン設定（キーコンフィグ）：割り当てを変えたキーで実際に操作できるか、キーが重なったときの扱い、
+    保存（開き直しても残るか）、既定値に戻せるか、を実際にクリックとキー入力で確かめる。"""
+    ctx, page = open_page(browser, cfg, "seed=1&mute=1", run, view)
+    res = {}
+
+    def st():
+        return page.evaluate(
+            """() => {
+              const g = window.__game, s = g.state, p = s.player;
+              return { x: p.x, y: p.y, turn: s.turn, hunger: p.hunger, floor: s.floor, over: s.over, kills: s.stats.kills,
+                       ehp: s.enemies.reduce((a, e) => a + e.hp, 0), inv: p.inv.map((it) => it.kind),
+                       sel: g.sel, aim: !!g.aim, ready: !document.getElementById('btn-attack').disabled };
+            }"""
+        )
+
+    def keymap():
+        return page.evaluate("window.__game.keys.map")
+
+    def listening():
+        return page.evaluate("window.__game.keyListening")
+
+    def press(code):
+        page.keyboard.press(code)
+        page.evaluate("window.__game.flush()")
+
+    def msg():
+        return page.inner_text("#key-msg")
+
+    def cell(action):
+        return f"#keycfg .key-cell[data-action='{action}']"
+
+    def rebind(action, code):
+        page.click(cell(action))
+        page.keyboard.press(code)
+
+    def cell_text(action):
+        return page.inner_text(cell(action) + " .key-keys").replace("\n", " ")
+
+    def pos(s):
+        return (s["x"], s["y"], s["turn"])
+
+    # 最初の場所から歩ける向きを1つえらぶ（その向きのキーを変えて、実際に歩けるかを見る）
+    walk = page.evaluate(
+        """() => {
+          const s = window.__game.state, p = s.player;
+          for (const a of Keys.ACTIONS) {
+            if (!a.dir) continue;
+            const x = p.x + a.dir[0], y = p.y + a.dir[1];
+            if (!Sim.isWall(s, x, y) && !Sim.enemyAt(s, x, y) && !Sim.itemAt(s, x, y) && !(x === s.stairs.x && y === s.stairs.y)) {
+              return { id: a.id, dx: a.dir[0], dy: a.dir[1], old: Keys.DEFAULTS[a.id] };
+            }
+          }
+          return null;
+        }"""
+    )
+    if not walk:
+        run.notes.append(f"[{view}] ボタン設定：最初の場所から歩ける向きが無い")
+        ctx.close()
+        return res
+    A = walk["id"]
+    res["walk_action"] = A
+    defaults = page.evaluate("Keys.defaults().map")
+    res["starts_default"] = keymap() == defaults
+    # 持ち物が無いときに「持ち物」キー（既定 I）を押すと、1行で知らせる（何もえらばれない）
+    press("KeyI")
+    res["item_key_says_empty"] = "からっぽ" in page.inner_text("#log") and st()["sel"] == -1 and st()["turn"] == 0
+
+    # ---- せってい → ボタン設定 ----
+    page.click("#btn-settings")
+    page.click("#btn-keycfg")
+    res["cells"] = page.locator("#keycfg .key-cell").count()
+    run.shot(page, view, "12-keycfg")
+    page.click(cell(A))
+    res["listening"] = listening() == A
+    run.shot(page, view, "13-keycfg-listen")
+    # 割り当てられないキー（Shift）は断られ、まだキーを待っている。Tab は「やめる」扱い。
+    page.keyboard.press("ShiftLeft")
+    res["reserved_refused"] = "使えない" in msg() and listening() == A and keymap() == defaults
+    page.keyboard.press("Tab")
+    res["tab_cancels"] = listening() is None and keymap() == defaults
+    # 同じボタンをもう一度えらぶと、やめる
+    page.click(cell(A))
+    page.click(cell(A))
+    res["click_again_cancels"] = listening() is None and keymap() == defaults
+    # ボタン設定の中は、キーボードだけでも動かせる（ボタンに移って Enter → キーを待つ。その Enter は割り当てにならない）
+    page.focus(cell(A))
+    page.keyboard.press("Enter")
+    res["enter_on_cell_starts_listening"] = listening() == A and keymap() == defaults
+    page.keyboard.press("Tab")
+
+    # 1) 重ならないキーに変える
+    rebind(A, "KeyP")
+    res["assign_plain"] = keymap()[A] == ["KeyP"] and cell_text(A) == "P" and "かえた" in msg()
+    # 2) 重なるキー（スペース＝こうげき）を「待つ」に：こうげきからスペースだけ外れ、F は残る
+    rebind("wait", "Space")
+    m = keymap()
+    res["collision_moves_key"] = m["wait"] == ["Space"] and m["attack"] == ["KeyF"] and "うつした" in msg()
+    rebind("attack", "KeyG")
+    rebind("item", "KeyU")
+    rebind("use", "KeyO")
+    # 3) 重なるキー（T＝「投げる」のただ1つのキー）を「やめる」に：投げるは「なし」になる
+    rebind("cancel", "KeyT")
+    m = keymap()
+    res["collision_empties"] = m["cancel"] == ["KeyT"] and m["throw"] == [] and cell_text("throw") == "なし" and "なくなった" in msg()
+    res["none_marked"] = page.evaluate("(sel) => document.querySelector(sel).classList.contains('none')", cell("throw"))
+    run.shot(page, view, "14-keycfg-changed")
+    rebind("throw", "KeyY")
+    custom = keymap()
+    codes = [c for v in custom.values() for c in v]
+    res["no_duplicate_keys"] = len(codes) == len(set(codes))
+    res["saved"] = page.evaluate("JSON.parse(localStorage.getItem('futsuu-settings')).keys.map") == custom
+    # 「やめる」に決めたキー（T）で、ボタン設定 → せってい → ゲーム と閉じられる
+    page.keyboard.press("KeyT")
+    res["cancel_key_closes_keycfg"] = page.evaluate("document.getElementById('keycfg').hidden && !document.getElementById('settings').hidden")
+    page.keyboard.press("KeyT")
+    res["cancel_key_closes_settings"] = page.evaluate("document.getElementById('settings').hidden")
+
+    # ---- 変えたキーで実際に操作する ----
+    b = st()
+    for old in walk["old"]:
+        press(old)
+    res["old_move_keys_off"] = pos(st()) == pos(b)
+    press("KeyP")
+    a = st()
+    res["new_move_key_works"] = pos(a) == (b["x"] + walk["dx"], b["y"] + walk["dy"], b["turn"] + 1)
+    b = a
+    for old in ("KeyS", "Numpad5", "Period"):
+        press(old)
+    res["old_wait_keys_off"] = st()["turn"] == b["turn"]
+    press("Space")
+    a = st()
+    res["new_wait_key_works"] = pos(a) == (b["x"], b["y"], b["turn"] + 1) and a["kills"] == b["kills"]
+
+    # 1フロア目を、いまの割り当てのキーだけで歩く（変えた向きは P、ほかの向きは既定のキー）。
+    # 隣に敵が来たら「こうげき」に決めたキー（G）。おにぎりを拾ったら 持ち物(U)→投げる(Y)→やめる(T)→使う(O)。
+    did_attack = did_item = False
+    for i in range(400):
+        s0 = st()
+        if s0["over"] or s0["floor"] > 1:
+            break
+        if s0["ready"]:
+            if not did_attack:
+                did_attack = True
+                press("KeyF")  # 前の「こうげき」キー（もう割り当てが無い）
+                s1 = st()
+                res["old_attack_key_off"] = (s1["turn"], s1["ehp"], s1["kills"]) == (s0["turn"], s0["ehp"], s0["kills"])
+                press("KeyG")
+                s1 = st()
+                res["new_attack_key_works"] = s1["turn"] == s0["turn"] + 1 and (s1["ehp"] < s0["ehp"] or s1["kills"] > s0["kills"])
+            else:
+                press("KeyG")
+            continue
+        if "onigiri" in s0["inv"] and not did_item:
+            did_item = True
+            press("KeyI")  # 前の「持ち物」キー
+            res["old_item_key_off"] = st()["sel"] == -1
+            press("KeyU")
+            res["new_item_key_selects"] = st()["sel"] == 0
+            press("KeyY")
+            res["new_throw_key_aims"] = st()["aim"] is True
+            press("KeyT")
+            s1 = st()
+            res["new_cancel_key_works"] = s1["aim"] is False and s1["sel"] == 0 and s1["turn"] == s0["turn"]
+            press("Enter")  # 前の「使う」キー
+            res["old_use_key_off"] = st()["hunger"] == s0["hunger"]
+            press("KeyO")
+            s1 = st()
+            res["new_use_key_works"] = s1["hunger"] > s0["hunger"] and "onigiri" not in s1["inv"] and s1["turn"] == s0["turn"] + 1
+            continue
+        key = page.evaluate(
+            """() => {
+              const g = window.__game, s = g.state, p = s.player;
+              const path = Sim.findPath(s, p.x, p.y, (x, y) => x === s.stairs.x && y === s.stairs.y);
+              const dx = path[0].x - p.x, dy = path[0].y - p.y;
+              const a = Keys.ACTIONS.find((a) => a.dir && a.dir[0] === dx && a.dir[1] === dy);
+              return g.keys.map[a.id][0];
+            }"""
+        )
+        press(key)
+    res["walked_floor1_by_keys"] = st()["floor"] == 2
+    for key in ("old_attack_key_off", "new_attack_key_works", "old_item_key_off", "new_item_key_selects", "new_throw_key_aims", "new_cancel_key_works", "old_use_key_off", "new_use_key_works"):
+        res.setdefault(key, False)  # その場面が起きなかったら、確かめられていない＝失敗として数える
+
+    # ---- 保存：開き直しても、変えた割り当てのまま ----
+    page.reload()
+    page.wait_for_function("window.__game && window.__game.state")
+    res["kept_after_reload"] = keymap() == custom
+    b = st()
+    press("KeyP")
+    res["new_key_works_after_reload"] = pos(st()) == (b["x"] + walk["dx"], b["y"] + walk["dy"], b["turn"] + 1)
+
+    # 結果の画面：「こうげき」に決めたキー（G）で「もういちど」
+    for i in range(200):
+        over = page.evaluate(
+            """() => {
+              const g = window.__game;
+              window.__mem = window.__mem || { rng: 5 };
+              for (let n = 0; n < 20 && !g.state.over; n++) { g.act(Bots.random(g.state, window.__mem)); g.flush(); }
+              return g.state.over;
+            }"""
+        )
+        if over:
+            break
+    page.wait_for_selector("#end:not([hidden])", timeout=5000)
+    page.wait_for_timeout(600)
+    page.keyboard.press("KeyG")
+    res["attack_key_retries"] = page.evaluate("document.getElementById('end').hidden && !window.__game.state.over && window.__game.state.turn === 0")
+
+    # ---- 既定値に戻す（2回押して決める） ----
+    page.reload()  # 「もういちど」で地図が変わったので、最初の地図（seed=1）に戻してから確かめる
+    page.wait_for_function("window.__game && window.__game.state")
+    page.click("#btn-settings")
+    page.click("#btn-keycfg")
+    page.click("#btn-key-reset")
+    res["reset_asks_first"] = keymap() == custom and "もういちど" in page.inner_text("#btn-key-reset")
+    run.shot(page, view, "15-keycfg-reset-ask")
+    page.click(cell(A))  # ほかのことをしたら、「もどす」は取り消される
+    page.click(cell(A))
+    res["reset_disarms"] = keymap() == custom and "もういちど" not in page.inner_text("#btn-key-reset")
+    page.click("#btn-key-reset")
+    page.click("#btn-key-reset")
+    res["reset_restores_defaults"] = keymap() == defaults and "もどした" in msg()
+    res["reset_saved"] = page.evaluate("JSON.parse(localStorage.getItem('futsuu-settings')).keys.map") == defaults
+    run.shot(page, view, "16-keycfg-reset-done")
+    page.click("#btn-close-keycfg")
+    page.click("#btn-close-settings")
+    b = st()
+    press("KeyP")
+    res["custom_key_off_after_reset"] = st()["turn"] == b["turn"]
+    press(walk["old"][0])
+    res["default_key_works_after_reset"] = pos(st()) == (b["x"] + walk["dx"], b["y"] + walk["dy"], b["turn"] + 1)
+    page.reload()
+    page.wait_for_function("window.__game && window.__game.state")
+    res["default_after_reload"] = keymap() == defaults
+
+    for key, val in res.items():
+        if val is False:
+            run.notes.append(f"[{view}] ボタン設定の確認に失敗: {key}")
+    if res.get("cells") != 14:
+        run.notes.append(f"[{view}] ボタン設定：操作のボタンが14個ない（{res.get('cells')}）")
     ctx.close()
     return res
 
@@ -387,9 +656,10 @@ def main():
         browser = pw.chromium.launch()
         for view in ("pc", "sp"):
             scenario(browser, view, VIEWS[view], run, full=True)
-            death_scenario(browser, view, VIEWS[view], run)
+            result.setdefault("seed", {})[view] = death_scenario(browser, view, VIEWS[view], run)
         scenario(browser, "sp-small", VIEWS["sp-small"], run, full=False)
         result["manual"] = {view: manual_scenario(browser, view, VIEWS[view], run) for view in ("pc", "sp")}
+        result["keys"] = {view: keys_scenario(browser, view, VIEWS[view], run) for view in ("pc", "sp", "sp-small")}
         result["auto"] = {view: auto_run(browser, view, VIEWS[view], run) for view in ("pc", "sp")}
         result["sound"] = sound_check(browser, VIEWS["pc"], run)
         result["selftest"] = self_test(browser, VIEWS["sp"], run)
@@ -418,6 +688,7 @@ def main():
             "notes": run.notes,
             "shots": run.shots,
             "vscroll_px": run.vscroll,
+            "item_cycle": run.cycle,
         }
     )
     (OUT / "check.json").write_text(json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -435,6 +706,13 @@ def main():
     print("縦のはみ出し(px):", json.dumps(run.vscroll, ensure_ascii=False))
     print("1マスの大きさ(px):", json.dumps(result["tile"], ensure_ascii=False))
     print("実際に押して確かめた結果:", json.dumps(result["manual"], ensure_ascii=False))
+    # ボタン設定は項目が多いので、数だけ出す（1つずつの結果は check.json の keys にある）
+    for view, res in result["keys"].items():
+        flags = {k: v for k, v in res.items() if isinstance(v, bool)}
+        ng = [k for k, v in flags.items() if not v]
+        print(f"ボタン設定（キーコンフィグ）を実際に押して確かめた結果 [{view}]: {len(flags) - len(ng)}/{len(flags)} 項目合格" + (f"　失敗: {ng}" if ng else ""))
+    print("「持ち物」キーの送り（次へ→最後の次は最初→やめる）:", json.dumps(run.cycle, ensure_ascii=False))
+    print("seed（?seed=5 → もういちど → 再読込）:", json.dumps(result["seed"], ensure_ascii=False))
     print("自動プレイ:", json.dumps(result["auto"], ensure_ascii=False))
     print("音:", json.dumps(result["sound"], ensure_ascii=False))
     print("検査の自己確認（わざと置いた悪い文字を見つけられるか）:", json.dumps(result["selftest"], ensure_ascii=False))
