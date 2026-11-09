@@ -494,5 +494,145 @@ test('1フロア目：階段へ歩くだけで「叩く・拾う」が起き、�
   }
 });
 
+// ---- ボタン設定（キーコンフィグ）。理念「みんなが遊べるようにする」 ----------
+// 画面を通した確認（変えたキーで実際に動くか）は tools/shots.py の keys_scenario にある。
+console.log('■ ボタン設定（キーコンフィグ）');
+const Keys = require('./keys.js');
+const NEED = ['up', 'down', 'left', 'right', 'upleft', 'upright', 'downleft', 'downright', 'wait', 'attack', 'item', 'use', 'throw', 'cancel'];
+const allCodes = (cfg) => [].concat(...Keys.ACTIONS.map((a) => cfg.map[a.id]));
+test('変えられる操作：移動8方向・待つ・攻撃・持ち物をえらぶ・使う・投げる・やめる', () => {
+  eq(Keys.ACTIONS.map((a) => a.id).sort(), NEED.slice().sort());
+  const dirs = Keys.ACTIONS.filter((a) => a.dir).map((a) => a.dir.join(','));
+  eq(dirs.slice().sort(), Sim.DIRS.map((d) => d.join(',')).sort(), '移動は8方向ぜんぶ');
+});
+test('既定値：どの操作にもキーがあり、1つのキーが2つの操作を持たない', () => {
+  const cfg = Keys.defaults();
+  for (const id of NEED) ok(cfg.map[id].length >= 1, id + ' にキーが無い');
+  const codes = allCodes(cfg);
+  eq(new Set(codes).size, codes.length, 'キーの重なり');
+  for (const c of codes) ok(Keys.usable(c), c + ' は割り当てられないキー');
+  ok(Keys.isDefault(cfg));
+});
+test('既定値：これまでのキー（やじるし／テンキー／QWE・AD・ZXC／スペース／S／Enter／T／Esc）がそのまま使える', () => {
+  const cfg = Keys.defaults();
+  const want = {
+    ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
+    KeyW: 'up', KeyX: 'down', KeyA: 'left', KeyD: 'right', KeyQ: 'upleft', KeyE: 'upright', KeyZ: 'downleft', KeyC: 'downright',
+    Numpad8: 'up', Numpad2: 'down', Numpad4: 'left', Numpad6: 'right', Numpad7: 'upleft', Numpad9: 'upright', Numpad1: 'downleft', Numpad3: 'downright',
+    KeyS: 'wait', Numpad5: 'wait', Period: 'wait', Space: 'attack', KeyF: 'attack', Enter: 'use', KeyT: 'throw', Escape: 'cancel',
+  };
+  for (const code of Object.keys(want)) eq(Keys.lookup(cfg, code), want[code], code);
+  eq(Keys.lookup(cfg, 'KeyP'), null, '割り当てていないキー');
+});
+test('割り当てを変えると、その操作は押したキー1つだけになる（前のキーは外れる）', () => {
+  const cfg = Keys.defaults();
+  const r = Keys.assign(cfg, 'up', 'KeyI', 'I');
+  eq(r, { ok: true, why: null, from: 'item', emptied: true });
+  eq(cfg.map.up, ['KeyI']);
+  eq(Keys.lookup(cfg, 'KeyI'), 'up');
+  for (const old of ['ArrowUp', 'KeyW', 'Numpad8']) eq(Keys.lookup(cfg, old), null, old + ' が残っている');
+});
+test('キーが重なったとき：上書き。前の操作からそのキーだけ外れ、ほかのキーは残る', () => {
+  const cfg = Keys.defaults();
+  const r = Keys.assign(cfg, 'wait', 'Space', null);
+  eq(r, { ok: true, why: null, from: 'attack', emptied: false });
+  eq(cfg.map.wait, ['Space']);
+  eq(cfg.map.attack, ['KeyF'], '攻撃には F が残る');
+  eq(Keys.lookup(cfg, 'Space'), 'wait');
+  eq(Keys.lookup(cfg, 'KeyS'), null, '待つの前のキーは外れる');
+});
+test('キーが重なったとき：前の操作にキーが残らなければ「なし」になり、それが分かる（emptied）', () => {
+  const cfg = Keys.defaults();
+  const r = Keys.assign(cfg, 'attack', 'Enter', null);
+  eq(r, { ok: true, why: null, from: 'use', emptied: true });
+  eq(cfg.map.use, []);
+  eq(Keys.lookup(cfg, 'Enter'), 'attack');
+});
+test('どう変えても、1つのキーが2つの操作を持つことは無い', () => {
+  const cfg = Keys.defaults();
+  const pool = ['KeyI', 'Space', 'Enter', 'ArrowUp', 'KeyP', 'Numpad5', 'Escape', 'KeyW', 'Digit1'];
+  let n = 7;
+  for (let i = 0; i < 400; i++) {
+    n = (n * 1103515245 + 12345) % 2147483648;
+    const action = NEED[n % NEED.length];
+    const code = pool[Math.floor(n / 97) % pool.length];
+    ok(Keys.assign(cfg, action, code, null).ok);
+    eq(cfg.map[action], [code]);
+    const codes = allCodes(cfg);
+    eq(new Set(codes).size, codes.length, i + '回目でキーが重なった');
+    for (const c of codes) eq(cfg.map[Keys.lookup(cfg, c)].includes(c), true);
+  }
+});
+test('同じ操作に同じキーをもう一度割り当てても、こわれない', () => {
+  const cfg = Keys.defaults();
+  eq(Keys.assign(cfg, 'attack', 'Space', null), { ok: true, why: null, from: null, emptied: false });
+  eq(cfg.map.attack, ['Space']);
+});
+test('割り当てられないキー（Tab・Shift などの修飾キー・F5 など）は断り、表は変わらない', () => {
+  const cfg = Keys.defaults();
+  const before = JSON.stringify(cfg);
+  for (const code of ['Tab', 'ShiftLeft', 'ControlRight', 'AltLeft', 'MetaLeft', 'F5', 'F12', 'CapsLock', '', null, 5]) {
+    eq(Keys.assign(cfg, 'up', code, null).ok, false, String(code));
+  }
+  eq(Keys.assign(cfg, 'nothing', 'KeyP', null).ok, false, '知らない操作');
+  eq(JSON.stringify(cfg), before);
+});
+test('保存して読みもどすと同じ表になる（「なし」にした操作も、そのまま）', () => {
+  const cfg = Keys.defaults();
+  Keys.assign(cfg, 'up', 'KeyI', 'I');
+  Keys.assign(cfg, 'attack', 'Enter', null);
+  Keys.assign(cfg, 'wait', 'BracketLeft', '@');
+  const back = Keys.load(JSON.parse(JSON.stringify(cfg)));
+  eq(back, cfg);
+  eq(back.map.item, [], '持ち物（I を上に取られた）は「なし」のまま');
+  eq(back.map.use, [], '使う（Enter を攻撃に取られた）は「なし」のまま');
+  ok(!Keys.isDefault(back));
+});
+test('既定値に戻す：defaults() はいつも同じ既定値を返し、変えた表に引きずられない', () => {
+  const cfg = Keys.defaults();
+  Keys.assign(cfg, 'up', 'KeyI', 'I');
+  Keys.assign(cfg, 'attack', 'Enter', null);
+  const fresh = Keys.defaults();
+  ok(Keys.isDefault(fresh));
+  eq(fresh.map, Keys.DEFAULTS);
+  eq(fresh.labels, {});
+  eq(Keys.lookup(fresh, 'ArrowUp'), 'up');
+  eq(Keys.lookup(fresh, 'Enter'), 'use');
+});
+test('こわれた保存データでも、必ず使える表になる', () => {
+  for (const bad of [null, undefined, 3, 'x', [], {}, { map: null }, { map: 'x' }]) ok(Keys.isDefault(Keys.load(bad)), JSON.stringify(bad));
+  // 重なり・使えないキー・知らない操作・足りない操作がまざったもの
+  const cfg = Keys.load({ map: { up: ['KeyI', 'Tab', 7], down: ['KeyI', 'KeyK'], attack: 'Space', zzz: ['KeyP'], wait: [] }, labels: { KeyI: 'I', KeyP: 'P', KeyK: 12 } });
+  eq(cfg.map.up, ['KeyI'], '使えないキーは捨てる');
+  eq(cfg.map.down, ['KeyK'], '重なったキーは先の操作が勝つ');
+  eq(cfg.map.attack, ['Space', 'KeyF'], '配列でないものは既定値');
+  eq(cfg.map.wait, [], '空で保存したものは空のまま');
+  eq(cfg.map.left, ['ArrowLeft', 'KeyA', 'Numpad4'], '保存に無い操作は既定値');
+  eq(cfg.labels, { KeyI: 'I' }, '使っていないキー・文字でない呼び名は捨てる');
+  const codes = allCodes(cfg);
+  eq(new Set(codes).size, codes.length);
+  eq(Object.keys(cfg.map).sort(), NEED.slice().sort());
+  // 保存に無い操作の既定キーを、別の操作がもう使っているとき：そのキーは取り返さない
+  const c2 = Keys.load({ map: { up: ['Space'] } });
+  eq(c2.map.up, ['Space']);
+  eq(c2.map.attack, ['KeyF']);
+});
+test('キーの呼び名：やじるし・文字・数字・テンキー・スペース。押したキーに書いてある文字を優先する', () => {
+  eq(['ArrowUp', 'KeyW', 'Digit3', 'Numpad8', 'Space', 'Enter', 'Escape', 'Period'].map(Keys.nameOf), ['↑', 'W', '3', 'テンキー8', 'スペース', 'Enter', 'Esc', '.']);
+  eq(Keys.nameOf('SomethingNew'), 'SomethingNew', '知らないキーは code のまま');
+  eq(Keys.labelFromEvent('BracketLeft', '@'), '@', '日本語キーボードの @');
+  eq(Keys.labelFromEvent('KeyQ', 'a'), 'A', '配列のちがうキーボード');
+  eq(Keys.labelFromEvent('Numpad8', '8'), 'テンキー8', 'テンキーは数字キーと見分ける');
+  eq(Keys.labelFromEvent('Space', ' '), 'スペース');
+  eq(Keys.labelFromEvent('ArrowUp', 'ArrowUp'), '↑');
+  eq(Keys.labelFromEvent('Backspace', 'Backspace'), 'BackSpace');
+  const cfg = Keys.defaults();
+  Keys.assign(cfg, 'wait', 'BracketLeft', '@');
+  eq(Keys.label(cfg, 'BracketLeft'), '@');
+  eq(Keys.label(cfg, 'KeyF'), 'F');
+  Keys.assign(cfg, 'wait', 'KeyP', 'P');
+  eq(cfg.labels, { KeyP: 'P' }, '使われなくなったキーの呼び名は残さない');
+});
+
 console.log('\n' + passed + ' 件合格 / ' + failed + ' 件失敗');
 if (failed) { console.log('失敗: ' + failures.join(' / ')); process.exit(1); }
