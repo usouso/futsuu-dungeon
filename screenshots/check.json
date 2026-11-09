@@ -1,0 +1,110 @@
+{
+  "manual": {
+    "pc": {
+      "attack_disabled_at_start": true,
+      "use_label": "食べる",
+      "hunger_after_eat": 98,
+      "hunger_before_eat": 48,
+      "pressed_attack": 6,
+      "used_item": true,
+      "floor_after": 2,
+      "kills": 3,
+      "keyboard_turns": 5
+    },
+    "sp": {
+      "attack_disabled_at_start": true,
+      "use_label": "食べる",
+      "hunger_after_eat": 98,
+      "hunger_before_eat": 48,
+      "pressed_attack": 6,
+      "used_item": true,
+      "floor_after": 2,
+      "kills": 3,
+      "keyboard_turns": 5
+    }
+  },
+  "auto": {
+    "pc": {
+      "ended": "clear",
+      "samples": 92,
+      "floor": 5,
+      "turns": 157,
+      "audio_started": false,
+      "muted": true
+    },
+    "sp": {
+      "ended": "clear",
+      "samples": 92,
+      "floor": 5,
+      "turns": 157,
+      "audio_started": false,
+      "muted": true
+    }
+  },
+  "sound": {
+    "mute": {
+      "started": false,
+      "muted": true,
+      "volume": 0.3
+    },
+    "normal": {
+      "started": true,
+      "muted": false,
+      "volume": 0.3
+    }
+  },
+  "selftest": {
+    "before_issues": 0,
+    "finds_small": true,
+    "finds_overlap": true,
+    "finds_overflow": true,
+    "finds_clipped": true,
+    "ignores_hidden": true,
+    "ok": true
+  },
+  "tile": {
+    "pc": 40,
+    "sp": 18,
+    "sp-small": 16
+  },
+  "checks": 294,
+  "texts": 3148,
+  "min_font_px": 14,
+  "issues": [],
+  "page_errors": [],
+  "notes": [],
+  "shots": [
+    "pc-01-start.png",
+    "pc-02-attack-ready.png",
+    "pc-03-first-attack.png",
+    "pc-04-first-pickup.png",
+    "pc-05-first-eat.png",
+    "pc-06-item-selected.png",
+    "pc-07-aim.png",
+    "pc-08-settings.png",
+    "pc-09-floor3.png",
+    "pc-10-end-clear.png",
+    "pc-11-end-dead.png",
+    "sp-01-start.png",
+    "sp-02-attack-ready.png",
+    "sp-03-first-attack.png",
+    "sp-04-first-pickup.png",
+    "sp-05-first-eat.png",
+    "sp-06-item-selected.png",
+    "sp-07-aim.png",
+    "sp-08-settings.png",
+    "sp-09-floor3.png",
+    "sp-10-end-clear.png",
+    "sp-11-end-dead.png",
+    "sp-small-01-start.png",
+    "sp-small-02-attack-ready.png",
+    "sp-small-03-first-attack.png",
+    "pc-20-auto-mid.png",
+    "sp-20-auto-mid.png"
+  ],
+  "vscroll_px": {
+    "pc": 0,
+    "sp": 0,
+    "sp-small": 0
+  }
+}
