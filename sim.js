@@ -290,6 +290,7 @@
       // 残りは道から外れた部屋へ（寄り道のごほうび：やくそう）
       const pathRooms = new Set();
       for (const c of path) { const r = roomAt(state, c.x, c.y); if (r >= 0) pathRooms.add(r); }
+      pathRooms.add(startRoom.id);
       const offPath = (c) => !pathRooms.has(c.room);
       const awayFromPath = (c) => path.every((q) => cheb(q, c) > OWN.WAKE_RANGE) && c.room !== startRoom.id;
       for (let i = 0; i < nEnemies; i++) {
@@ -298,10 +299,19 @@
           pickCell((c) => notOnPath(c) && c.room !== startRoom.id && farFromPlayer(c)) || pickCell((c) => notOnPath(c) && farFromPlayer(c)) || pickCell(notOnPath);
         if (c) state.enemies.push(newEnemy(state, 'maru', c.x, c.y));
       }
+      // アイテムは、道から外れた部屋か、道の上のおにぎりより先にある部屋へ。
+      // （スタートの部屋や、敵より手前に置くと「敵→アイテム→階段」の順番が崩れる）
+      const roomFirst = {};
+      path.forEach((c, i) => { const r = roomAt(state, c.x, c.y); if (r >= 0 && roomFirst[r] == null) roomFirst[r] = i; });
+      const cut = ii < 0 ? len : ii;
+      const offCells = (c) => path.every((q) => q.x !== c.x || q.y !== c.y);
+      const later = (c) => offCells(c) && c.room !== startRoom.id && roomFirst[c.room] != null && roomFirst[c.room] > cut;
       for (let i = 0; i < nItems; i++) {
         const kind = i === 0 ? 'herb' : pickWeighted(state, table.ipool);
-        const c = pickCell(offPath) || pickCell((c) => path.every((q) => q.x !== c.x || q.y !== c.y));
-        if (c) state.items.push(newItem(state, kind, c.x, c.y));
+        const c = pickCell(offPath) || pickCell(later);
+        if (!c && !force) return false;
+        const c2 = c || pickCell(offCells);
+        if (c2) state.items.push(newItem(state, kind, c2.x, c2.y));
       }
       return true;
     }

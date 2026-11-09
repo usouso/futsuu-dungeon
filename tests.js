@@ -462,6 +462,11 @@ test('1フロア目：階段への道の上に、まるぼう→おにぎり→�
     ok(path.slice(0, ii).some((c) => onCorridor(c) && Sim.enemyAt(s, c.x, c.y)), 'seed ' + seed + ' おにぎりの手前の通路に、まるぼうがいない');
     ok(s.map.tiles[path[ii].y * s.map.w + path[ii].x] === Sim.PATH, 'seed ' + seed + ' おにぎりが通路の上に無い');
     ok(s.enemies.every((e) => e.kind === 'maru'), 'seed ' + seed + ' 1フロア目の敵はまるぼうだけ');
+    const startRoom = Sim.roomAt(s, s.player.x, s.player.y);
+    ok(s.items.every((it) => Sim.roomAt(s, it.x, it.y) !== startRoom), 'seed ' + seed + ' スタートの部屋にアイテムがある');
+    // おにぎりより手前の部屋（道の上）には、ほかのアイテムを置かない
+    const before = new Set(path.slice(0, ii).map((c) => Sim.roomAt(s, c.x, c.y)).filter((r) => r >= 0));
+    ok(s.items.every((it) => !before.has(Sim.roomAt(s, it.x, it.y))), 'seed ' + seed + ' おにぎりより手前の部屋にアイテムがある');
     ok(s.items.some((it) => it.kind === 'herb'), 'seed ' + seed + ' やくそうが無い');
   }
 });
@@ -470,6 +475,7 @@ test('1フロア目：階段へ歩くだけで「叩く・拾う」が起き、�
     const s = Sim.create(seed);
     let attacked = false, picked = false;
     for (let i = 0; i < 200 && s.floor === 1 && !s.over; i++) {
+      if (!attacked) ok(s.player.inv.length === 0, 'seed ' + seed + ' 叩くより先に拾った（順番が 敵→アイテム でない）');
       const path = Sim.findPath(s, s.player.x, s.player.y, (x, y) => x === s.stairs.x && y === s.stairs.y);
       const c = path[0];
       const ev = Sim.step(s, move(c.x - s.player.x, c.y - s.player.y));
