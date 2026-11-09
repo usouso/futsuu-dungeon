@@ -163,8 +163,37 @@ button:disabled { cursor: default; }
 .set-row button.on { border-color: var(--accent); background: #3a3520; font-weight: 700; }
 #vol { flex: 1 1 80px; min-width: 80px; height: 32px; accent-color: var(--accent); }
 #vol-num { font-size: 16px; font-weight: 700; min-width: 2.2em; text-align: right; font-variant-numeric: tabular-nums; }
-.set-keys { font-size: 14px; line-height: 1.5; color: var(--dim); display: none; }
 .set-seed { font-size: 14px; color: var(--dim); }
+
+/* ---- ボタン設定（キーコンフィグ）：上の9個は方向ボタンと同じ並び ---- */
+#keycfg .panel { gap: 8px; }
+.key-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+.key-cell {
+  min-width: 0; min-height: 48px; padding: 3px 2px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  background: var(--panel2); border: 2px solid var(--line); border-radius: 10px;
+}
+#key-dirs .key-cell { min-height: 68px; }
+.key-name { font-size: 14px; line-height: 1.3; color: var(--dim); white-space: nowrap; }
+.key-keys { display: flex; flex-wrap: wrap; justify-content: center; column-gap: 8px; font-size: 15px; font-weight: 700; line-height: 1.3; }
+.key-keys span { white-space: nowrap; }
+.key-cell.on { border-color: var(--accent); background: #3a3520; }
+.key-cell.on .key-keys { color: #ffe08a; }
+/* キーが無い操作：色だけでなく、点線と「なし」の文字でも分かるように */
+.key-cell.none { border-style: dashed; border-color: var(--danger); background: transparent; }
+.key-cell.none .key-keys { color: #ffb3aa; }
+.key-note { font-size: 14px; line-height: 1.4; color: var(--dim); }
+/* 行は、ことばの切れ目（空白）で折り返す。ことばの途中では切らない */
+#key-msg { min-height: 42px; font-size: 15px; line-height: 21px; word-break: keep-all; overflow-wrap: anywhere; }
+#key-msg.good { color: #ffe08a; font-weight: 700; }
+#key-msg.bad { color: #ffb3aa; font-weight: 700; }
+.key-foot { display: flex; gap: 8px; align-items: stretch; }
+#btn-key-reset {
+  flex: 1 1 0; min-width: 0; min-height: 52px; padding: 2px 8px;
+  background: var(--panel2); border: 2px solid var(--line); border-radius: 10px; font-size: 15px; line-height: 1.3;
+}
+#btn-key-reset.on { border-color: var(--danger); background: #40221f; font-weight: 700; }
+#btn-close-keycfg { flex: 0 0 104px; }
 #end-title.clear { color: #ffe08a; }
 #end-cause { font-size: 18px; font-weight: 700; line-height: 1.4; }
 #end-stats, #end-left { font-size: 16px; line-height: 1.5; }
@@ -190,6 +219,5 @@ button:disabled { cursor: default; }
   }
   #stage { grid-column: 1; grid-row: 1 / span 6; align-self: start; }
   #hud, #log, #inv, #itemrow, #controls { grid-column: 2; }
-  .set-keys { display: block; }
   #dpad { grid-template-columns: repeat(3, 56px); grid-template-rows: repeat(3, 56px); }
 }

@@ -69,14 +69,27 @@
       <button type="button" class="shake-opt" data-shake="weak">よわい</button>
       <button type="button" class="shake-opt" data-shake="off">なし</button>
     </div>
-    <div class="set-keys" id="keys-help">
-      <div>キーボード</div>
-      <div>うごく：やじるし／テンキー／Q W E・A D・Z X C</div>
-      <div>こうげき：スペース　　待つ：S</div>
-      <div>持ち物：1〜8 でえらぶ → Enter で使う／T で投げる</div>
+    <div class="set-row">
+      <span class="set-label">キーボード</span>
+      <button type="button" id="btn-keycfg">ボタン設定</button>
     </div>
     <div class="set-seed" id="seed-line"></div>
     <button type="button" id="btn-close-settings" class="primary">とじる</button>
+  </div>
+</div>
+
+<!-- ボタン設定（キーコンフィグ）。中身（操作ごとのボタン）は ui.js が keys.js の表から作る -->
+<div id="keycfg" class="overlay" hidden>
+  <div class="panel">
+    <h2>ボタン設定</h2>
+    <div class="key-grid" id="key-dirs" aria-label="うごく・待つ"></div>
+    <div class="key-grid" id="key-acts" aria-label="こうげき・持ち物"></div>
+    <div class="key-note">数字の 1〜8 でも 持ち物を えらべる</div>
+    <div id="key-msg" aria-live="polite"></div>
+    <div class="key-foot">
+      <button type="button" id="btn-key-reset">はじめの キーに もどす</button>
+      <button type="button" id="btn-close-keycfg" class="primary">とじる</button>
+    </div>
   </div>
 </div>
 
@@ -94,6 +107,7 @@
 <script src="sim.js"></script>
 <script src="bots.js"></script>
 <script src="audio.js"></script>
+<script src="keys.js"></script>
 <script src="ui.js"></script>
 </body>
 </html>

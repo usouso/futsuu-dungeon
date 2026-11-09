@@ -19,13 +19,14 @@
   const $ = (id) => document.getElementById(id);
   const { ITEMS, ENEMIES, SPEC, DIRS } = Sim;
 
-  // ---- 設定（音量・ゆれ）。覚えておく -------------------------------------
+  // ---- 設定（音量・ゆれ・キーの割り当て）。覚えておく -----------------------
   const SHAKE_COEF = { normal: 1, weak: 0.5, off: 0 };
-  const settings = { vol: 0.3, shake: 'normal' };
+  const settings = { vol: 0.3, shake: 'normal', keys: Keys.defaults() };
   try {
     const saved = JSON.parse(localStorage.getItem('futsuu-settings') || 'null');
     if (saved && typeof saved.vol === 'number') settings.vol = Math.max(0, Math.min(1, saved.vol));
     if (saved && SHAKE_COEF[saved.shake] != null) settings.shake = saved.shake;
+    if (saved) settings.keys = Keys.load(saved.keys); // こわれていても必ず使える表になる（keys.js）
   } catch (e) { /* 保存できない環境でも遊べる */ }
   function saveSettings() {
     try { localStorage.setItem('futsuu-settings', JSON.stringify(settings)); } catch (e) { /* 同上 */ }
@@ -459,7 +460,7 @@
   }
   function autoStep() {
     autoTimer = null;
-    if (!$('settings').hidden) { autoTimer = setTimeout(autoStep, 300); return; }
+    if (!$('settings').hidden || !$('keycfg').hidden) { autoTimer = setTimeout(autoStep, 300); return; }
     botStep();
   }
 
@@ -575,6 +576,16 @@
     sel = sel === i ? -1 : i;
     refreshControls();
   }
+  // キーで持ち物をえらぶ：押すたびに次の持ち物へ（最後の次は最初にもどる）
+  function nextItem() {
+    if (!state || state.over || AUTO) return;
+    flush();
+    const n = state.player.inv.length;
+    if (!n) { sfx('nope'); say('持ち物は からっぽ', 'bad', 'noitem'); return; }
+    aim = null;
+    sel = sel < 0 ? 0 : (sel + 1) % n;
+    refreshControls();
+  }
   function useSelected() {
     const it = state.player.inv[sel];
     if (!it) return;
@@ -641,24 +652,130 @@
   }
 
   // ---- キーボード ----------------------------------------------------------
-  const KEY_DIR = {
-    ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
-    KeyW: [0, -1], KeyX: [0, 1], KeyA: [-1, 0], KeyD: [1, 0], KeyQ: [-1, -1], KeyE: [1, -1], KeyZ: [-1, 1], KeyC: [1, 1],
-    Numpad8: [0, -1], Numpad2: [0, 1], Numpad4: [-1, 0], Numpad6: [1, 0], Numpad7: [-1, -1], Numpad9: [1, -1], Numpad1: [-1, 1], Numpad3: [1, 1],
+  // どのキーがどの操作かは、ボタン設定（settings.keys）で決まる。決まりは keys.js。
+  const KEY_ACT = {
+    wait: pressCenter,
+    attack: pressAttack,
+    item: nextItem,
+    use() { if (sel >= 0 && !aim) useSelected(); },
+    throw() { if (sel >= 0) throwSelected(); },
+    cancel: cancelSelected,
   };
+  for (const a of Keys.ACTIONS) if (a.dir) KEY_ACT[a.id] = () => pressDir(a.dir[0], a.dir[1]);
+
   function onKey(e) {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     Sfx.unlock();
-    if (!$('settings').hidden) { if (e.code === 'Escape') { closeSettings(); e.preventDefault(); } return; }
-    if (!$('end').hidden) { if (e.code === 'Enter' || e.code === 'Space') { retry(); e.preventDefault(); } return; }
-    const dir = KEY_DIR[e.code];
-    if (dir) { pressDir(dir[0], dir[1]); e.preventDefault(); return; }
-    if (e.code === 'KeyS' || e.code === 'Numpad5' || e.code === 'Period') { pressCenter(); e.preventDefault(); return; }
-    if (/^Digit[1-8]$/.test(e.code)) { selectSlot(parseInt(e.code.slice(5), 10) - 1); e.preventDefault(); return; }
-    if (e.code === 'Escape') { cancelSelected(); e.preventDefault(); return; }
-    if (e.code === 'KeyT' && sel >= 0) { throwSelected(); e.preventDefault(); return; }
-    if (e.code === 'Enter' && sel >= 0 && !aim) { useSelected(); e.preventDefault(); return; }
-    if (e.code === 'Space' || e.code === 'KeyF' || e.code === 'Enter') { pressAttack(); e.preventDefault(); }
+    if (!$('keycfg').hidden) { onKeyCfg(e); return; }
+    const id = Keys.lookup(settings.keys, e.code);
+    // 重ねて出す画面は、決まったキー（Esc／Enter／スペース）でも、自分で決めた「やめる」「こうげき」「使う」のキーでも動く
+    if (!$('settings').hidden) { if (e.code === 'Escape' || id === 'cancel') { closeSettings(); e.preventDefault(); } return; }
+    if (!$('end').hidden) { if (e.code === 'Enter' || e.code === 'Space' || id === 'attack' || id === 'use') { retry(); e.preventDefault(); } return; }
+    if (id) { KEY_ACT[id](); e.preventDefault(); return; }
+    // 数字の 1〜8 は持ち物を番号でえらぶ（その数字キーを別の操作に割り当てていないときだけ）
+    if (/^Digit[1-8]$/.test(e.code)) { selectSlot(parseInt(e.code.slice(5), 10) - 1); e.preventDefault(); }
+  }
+  // 割り当てに使ったキーを離したとき、選んでいたボタンがもう一度押されないようにする（スペースは離したときに押した扱いになる）
+  let swallowUp = null;
+  function onKeyUp(e) {
+    if (swallowUp !== e.code) return;
+    swallowUp = null;
+    e.preventDefault();
+  }
+
+  // ---- ボタン設定（キーコンフィグ） ------------------------------------------
+  // 操作のボタンをえらぶ → キーを押す、で割り当てる。重なったときの決まりは keys.js（上書き）。
+  const KEY_IDLE = 'かえたい ボタンを えらんで、キーを おす';
+  const keyCells = {};
+  let listening = null; // キーを待っている操作
+  let resetArmed = false; // 「もどす」を1回押した（もう1回で本当にもどす）
+  function buildKeyCfg() {
+    for (const a of Keys.ACTIONS) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'key-cell';
+      b.dataset.action = a.id;
+      const name = document.createElement('span');
+      name.className = 'key-name';
+      name.textContent = a.name;
+      const keys = document.createElement('span');
+      keys.className = 'key-keys';
+      b.appendChild(name); b.appendChild(keys);
+      b.addEventListener('click', () => listenFor(listening === a.id ? null : a.id));
+      $(a.dir || a.id === 'wait' ? 'key-dirs' : 'key-acts').appendChild(b);
+      keyCells[a.id] = { b, keys };
+    }
+  }
+  function keyMsg(text, cls) { const m = $('key-msg'); m.textContent = text; m.className = cls || ''; }
+  function renderKeyCfg() {
+    for (const a of Keys.ACTIONS) {
+      const cell = keyCells[a.id];
+      const codes = settings.keys.map[a.id];
+      const on = listening === a.id;
+      cell.b.classList.toggle('on', on);
+      cell.b.classList.toggle('none', !on && !codes.length); // キーが無い操作は、点線と「なし」の文字で分かるように
+      const words = on ? ['キーを おす'] : codes.length ? codes.map((c) => Keys.label(settings.keys, c)) : ['なし'];
+      cell.keys.textContent = '';
+      for (const w of words) { const sp = document.createElement('span'); sp.textContent = w; cell.keys.appendChild(sp); }
+    }
+    const rb = $('btn-key-reset');
+    rb.textContent = resetArmed ? 'もういちど おすと もどす' : 'はじめの キーに もどす';
+    rb.classList.toggle('on', resetArmed);
+  }
+  function listenFor(id) {
+    listening = id; resetArmed = false;
+    keyMsg(id ? `「${Keys.BY_ID[id].name}」に 使う キーを おす（やめるときは もういちど えらぶ）` : KEY_IDLE);
+    renderKeyCfg();
+  }
+  function onKeyCfg(e) {
+    if (!listening) {
+      if (e.code === 'Escape' || Keys.lookup(settings.keys, e.code) === 'cancel') { closeKeyCfg(); e.preventDefault(); }
+      return;
+    }
+    if (e.code === 'Tab') { listenFor(null); return; } // Tab は割り当てず、画面の中の移動に残す
+    e.preventDefault();
+    if (e.repeat) return;
+    swallowUp = e.code;
+    const a = Keys.BY_ID[listening];
+    const shown = Keys.labelFromEvent(e.code, e.key);
+    const r = Keys.assign(settings.keys, a.id, e.code, shown === Keys.nameOf(e.code) ? null : shown);
+    if (!r.ok) { Sfx.play('nope'); keyMsg('その キーは 使えない。ほかの キーを おす', 'bad'); return; }
+    saveSettings();
+    listening = null;
+    Sfx.play('pickup');
+    let text = `「${a.name}」を ${shown} に かえた`;
+    if (r.from && r.emptied) text += `。「${Keys.BY_ID[r.from].name}」の キーが なくなった`;
+    else if (r.from) text += `（「${Keys.BY_ID[r.from].name}」から うつした）`;
+    keyMsg(text, r.emptied ? 'bad' : 'good');
+    renderKeyCfg();
+  }
+  // 既定値に戻す：押しまちがいで消えないよう、2回押して決める
+  function pressKeyReset() {
+    listening = null;
+    if (Keys.isDefault(settings.keys)) { resetArmed = false; keyMsg('いまは はじめの キーの まま'); }
+    else if (!resetArmed) { resetArmed = true; keyMsg('いまの 設定を けして、はじめの キーに もどす？', 'bad'); }
+    else {
+      resetArmed = false;
+      settings.keys = Keys.defaults();
+      saveSettings();
+      Sfx.play('pickup');
+      keyMsg('はじめの キーに もどした', 'good');
+    }
+    renderKeyCfg();
+  }
+  function openKeyCfg() {
+    listening = null; resetArmed = false;
+    keyMsg(KEY_IDLE);
+    renderKeyCfg();
+    $('settings').hidden = true;
+    $('keycfg').hidden = false;
+  }
+  function closeKeyCfg() {
+    listening = null; resetArmed = false;
+    $('keycfg').hidden = true;
+    renderSettings();
+    $('settings').hidden = false;
+    $('btn-keycfg').focus();
   }
 
   // ---- せってい ------------------------------------------------------------
@@ -1030,6 +1147,7 @@
   // ---- 起動 ---------------------------------------------------------------
   buildInv();
   buildDpad();
+  buildKeyCfg();
   $('btn-attack').addEventListener('click', pressAttack);
   $('btn-use').addEventListener('click', () => { if (!AUTO && state && !state.over) { flush(); useSelected(); } });
   $('btn-throw').addEventListener('click', () => { if (!AUTO && state && !state.over) { flush(); throwSelected(); } });
@@ -1043,8 +1161,12 @@
     settings.shake = b.dataset.shake; saveSettings(); renderSettings();
     clock = performance.now(); shake(5, 260); // ためしにゆらして見せる
   }));
+  $('btn-keycfg').addEventListener('click', openKeyCfg);
+  $('btn-close-keycfg').addEventListener('click', closeKeyCfg);
+  $('btn-key-reset').addEventListener('click', pressKeyReset);
   $('btn-retry').addEventListener('click', retry);
   window.addEventListener('keydown', onKey);
+  window.addEventListener('keyup', onKeyUp);
   window.addEventListener('pointerdown', () => Sfx.unlock(), { passive: true });
   window.addEventListener('resize', layout);
 
@@ -1058,6 +1180,10 @@
     get firsts() { return firsts; },
     get busy() { return queue.length > 0; },
     get tile() { return tile; },
+    get sel() { return sel; },
+    get aim() { return aim ? Object.assign({}, aim) : null; },
+    get keys() { return JSON.parse(JSON.stringify(settings.keys)); },
+    get keyListening() { return listening; },
     act, botStep, flush, newGame,
     params: { AUTO, BG, START_MUTED, seedBase },
   };
