@@ -634,5 +634,31 @@ test('キーの呼び名：やじるし・文字・数字・テンキー・ス�
   eq(cfg.labels, { KeyP: 'P' }, '使われなくなったキーの呼び名は残さない');
 });
 
+// ---- 理念との突き合わせ（再発防止。REPORT.md 6章の教訓） ---------------------
+// 理念の「常に守る」項目は、仕様書に再掲されていなくても対象。
+// 理念に項目が増えたのに REPORT.md 9章の対応表に行が無いと、ここで落ちる。
+console.log('■ 理念との突き合わせ');
+test('理念「みんなが遊べるようにする（常に守る）」の項目すべてに、REPORT.md 9章の対応表の行がある', () => {
+  const fs = require('fs'), path = require('path');
+  const section = (file, head) => {
+    const text = fs.readFileSync(path.join(__dirname, file), 'utf8');
+    const i = text.indexOf(head);
+    ok(i >= 0, file + ' に「' + head + '」の節が無い');
+    const rest = text.slice(i + head.length);
+    const j = rest.search(/\n## /);
+    return (j < 0 ? rest : rest.slice(0, j)).split('\n');
+  };
+  const items = section('docs/理念.md', '## みんなが遊べるようにする').filter((l) => /^- /.test(l)).map((l) => l.slice(2));
+  ok(items.length >= 7, '理念の項目が読めていない（' + items.length + '個）');
+  const rows = section('REPORT.md', '## 9. 理念「みんなが遊べるようにする').filter((l) => /^\|/.test(l)).slice(2)
+    .map((l) => l.split('|').slice(1, -1).map((c) => c.trim()));
+  eq(rows.length, items.length, '理念の項目の数と、対応表の行の数');
+  rows.forEach((r, i) => {
+    eq(r.length, 3, (i + 1) + '行目の列の数');
+    ok(r.every((c) => c.length > 0), (i + 1) + '行目に空の欄がある');
+    ok(items[i].startsWith(r[0].slice(0, 6)), (i + 1) + '行目が理念の項目「' + items[i].slice(0, 12) + '…」と合っていない');
+  });
+});
+
 console.log('\n' + passed + ' 件合格 / ' + failed + ' 件失敗');
 if (failed) { console.log('失敗: ' + failures.join(' / ')); process.exit(1); }
