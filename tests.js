@@ -236,5 +236,28 @@ function addEnemy(st, kind, x, y) {
   ok(!cfg.map['up'].includes(stolen), '奪われた側から外れる');
 }
 
+// 16. 振り向き：壁を押しても、face でも、ターンは進まない
+{
+  const st = arena();
+  st.player.dir = 4;
+  const t0 = st.turn;
+  // 北端近くに置いて北（壁）を押す
+  st.player.x = 5; st.player.y = 1;
+  Sim.step(st, { type: 'move', dir: 0 });
+  eq(st.player.dir, 0, '壁を押すと向きが変わる');
+  eq(st.turn, t0, '壁を押してもターンは進まない');
+  eq(st.player.y, 1, '壁を押しても動かない');
+  // 開けた方向への face
+  Sim.step(st, { type: 'face', dir: 2 });
+  eq(st.player.dir, 2, 'face で開けた方向にも向ける');
+  eq(st.turn, t0, 'face でもターンは進まない');
+  // 隣の敵は、振り向きの間は攻撃してこない
+  const e = addEnemy(st, 'marubou', 5, 2);
+  const hp = st.player.hp;
+  Sim.step(st, { type: 'face', dir: 6 });
+  eq(st.player.hp, hp, '振り向きの間に敵は行動しない');
+  ok(e.x === 5 && e.y === 2, '振り向きの間に敵は動かない');
+}
+
 console.log('テスト結果： ' + pass + ' 件合格 / ' + fail + ' 件失敗');
 process.exit(fail ? 1 : 0);

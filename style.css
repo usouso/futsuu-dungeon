@@ -238,7 +238,7 @@ button:disabled { cursor: default; }
 .inv-empty { color: #9aa3b8; font-size: 14px; padding: 6px 2px; }
 #subcontrols { display: flex; gap: 8px; }
 #subcontrols button {
-  flex: 1; font-size: 15px; padding: 10px;
+  flex: 1; font-size: 13px; padding: 9px 4px; white-space: nowrap;
   border-radius: 8px; background: #2a3049; color: #eef1f8; border: none;
 }
 #subcontrols button:disabled { opacity: 0.45; }

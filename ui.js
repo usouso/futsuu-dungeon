@@ -22,6 +22,7 @@
   // ---- ゲーム状態 ----------------------------------------------------------
   let st = Sim.newGame(startSeed);
   let selected = -1;      // 選択中の持ち物 index（-1 = 未選択）
+  let faceMode = false;   // 次の方向入力を「振り向き」にする
   let dashOn = false;
   let dashTimer = null;
   let over = false;
@@ -312,7 +313,12 @@
     dashTimer = setTimeout(() => dashStep(dir), 95);
   }
 
+  function setFaceMode(on) {
+    faceMode = on;
+    $('btn-face').textContent = on ? 'むき：オン（方向を押して）' : 'むき：オフ';
+  }
   function doMove(dir) {
+    if (faceMode) { setFaceMode(false); act({ type: 'face', dir }); return; }
     if (dashOn) { dashStep(dir); return; }
     act({ type: 'move', dir });
   }
@@ -337,9 +343,10 @@
   $('btn-throw').addEventListener('click', () => { if (selected >= 0) { stopDash(); act({ type: 'throw', index: selected }); selected = -1; renderInv(); } });
   $('btn-cancel').addEventListener('click', () => { selected = -1; renderInv(); });
   $('btn-descend').addEventListener('click', () => { stopDash(); act({ type: 'descend' }); });
+  $('btn-face').addEventListener('click', () => { setFaceMode(!faceMode); });
   $('btn-dash').addEventListener('click', () => {
     dashOn = !dashOn;
-    $('btn-dash').textContent = dashOn ? 'ダッシュ：オン（方向を押すと走る）' : 'ダッシュ：オフ';
+    $('btn-dash').textContent = dashOn ? 'ダッシュ：オン' : 'ダッシュ：オフ';
     if (!dashOn && dashTimer) { clearTimeout(dashTimer); dashTimer = null; }
   });
   $('btn-retry').addEventListener('click', () => {
@@ -379,7 +386,8 @@
     const a = Keys.BY_ID[id];
     if (a && a.dir) {
       const dir = Sim.DIRS.findIndex((d) => d.dx === a.dir[0] && d.dy === a.dir[1]);
-      doMove(dir);
+      if (e.shiftKey) { setFaceMode(false); act({ type: 'face', dir }); }
+      else doMove(dir);
     } else if (id === 'attack') { stopDash(); act({ type: 'attack' }); }
     else if (id === 'wait') { stopDash(); act({ type: 'wait' }); }
     else if (id === 'item') {
@@ -451,6 +459,7 @@
   window.addEventListener('resize', fitCanvas);
   pushLog('ダンジョンに入った。階段を探そう。');
   pushLog('攻撃ボタンで、向いている方向に振る。敵がいなければ素振り（罠探しにもなる）。');
+  pushLog('壁の方向を押すと、ターンを進めずに向きだけ変わる。開けた方向には「むき」ボタン→方向でも変えられる。');
   fitCanvas();
   render();
 })();
