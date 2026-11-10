@@ -1,221 +1,287 @@
-// bots.js — ボット4種。ルール側（sim.js）だけを使って、画面なしで何百回も遊ばせる。
-// 実行: node bots.js [回数=500] [最初のseed=1]
-// ブラウザでは ?auto=1 の自動プレイがここの「アイテムを使う」ボットを使う。
-(function (root, factory) {
-  if (typeof module === 'object' && module.exports) module.exports = factory(require('./sim.js'));
-  else root.Bots = factory(root.Sim);
-})(typeof self !== 'undefined' ? self : this, function (Sim) {
-  'use strict';
-  const { DIRS, cheb } = Sim;
+// bots.js — 測定用ボット（作り直し版）。 node bots.js [試行回数]
+// ボットは地図を全部知っている前提で動く（難しさの目安用。人間の初見とは別）。
+'use strict';
+const Sim = require('./sim.js');
 
-  function sign(n) { return n > 0 ? 1 : n < 0 ? -1 : 0; }
-  function toward(p, o) { return { type: 'move', dx: sign(o.x - p.x), dy: sign(o.y - p.y) }; }
-  function isBomb(state, x, y) { const e = Sim.enemyAt(state, x, y); return !!e && e.kind === 'bomb'; }
-
-  // goal(x,y) が真の一番近いマスへ向かう最初の1歩。ばくだん岩は、できれば避けて通る。
-  function stepTo(state, goal) {
-    const p = state.player;
-    const path = Sim.findPath(state, p.x, p.y, goal, (x, y) => isBomb(state, x, y)) || Sim.findPath(state, p.x, p.y, goal);
-    if (!path) return null;
-    return { type: 'move', dx: path[0].x - p.x, dy: path[0].y - p.y };
+function walkable(st, x, y, forPlayer) {
+  if (Sim.tileAt(st, x, y) === 0) return false;
+  if (forPlayer) {
+    if (Sim.enemyAt(st, x, y)) return false;
+    if (Sim.dekaiTileAt(st, x, y)) return false;
   }
-  const atStairs = (state) => (x, y) => x === state.stairs.x && y === state.stairs.y;
-
-  // ボット専用の乱数（ルール側の乱数を乱さない）
-  function botRnd(mem) {
-    mem.rng = (mem.rng * 1664525 + 1013904223) >>> 0;
-    return mem.rng / 4294967296;
-  }
-
-  // 1) 何も考えない：できることの中から、でたらめに選ぶ
-  function random(state, mem) {
-    const p = state.player, opts = [];
-    for (const [dx, dy] of DIRS) {
-      if (!Sim.isWall(state, p.x + dx, p.y + dy) || Sim.enemyAt(state, p.x + dx, p.y + dy)) opts.push({ type: 'move', dx, dy });
-    }
-    opts.push({ type: 'wait' });
-    p.inv.forEach((it, slot) => {
-      const d = DIRS[Math.floor(botRnd(mem) * 8)];
-      if (it.kind === 'scroll' && Sim.roomAt(state, p.x, p.y) < 0) return;
-      opts.push({ type: 'use', slot, dx: d[0], dy: d[1] });
-      opts.push({ type: 'throw', slot, dx: d[0], dy: d[1] });
-    });
-    return opts[Math.floor(botRnd(mem) * opts.length)];
-  }
-
-  // 4) 階段直行：階段への最短の道を歩くだけ。道をふさぐ敵だけ叩く（ぶつかり攻撃）
-  function direct(state) {
-    return stepTo(state, atStairs(state)) || { type: 'wait' };
-  }
-
-  // 「アイテムを使う」ボットの、使いどころの判断
-  function itemAction(state) {
-    const p = state.player, inv = p.inv;
-    const slot = (k) => inv.findIndex((it) => it.kind === k);
-    const threats = state.enemies.filter((e) => e.awake && e.kind !== 'bomb');
-    const adj = threats.filter((e) => cheb(e, p) === 1);
-    const room = Sim.roomAt(state, p.x, p.y);
-    const inRoom = room >= 0 ? threats.filter((e) => Sim.roomAt(state, e.x, e.y) === room) : [];
-    const danger = adj.reduce((s, e) => s + Sim.ENEMIES[e.kind].atk, 0);
-    const low = p.hp <= Math.max(8, danger * 2);
-
-    // おにぎり：満腹度+50がむだにならない所まで減ったら食べる
-    if (slot('onigiri') >= 0 && p.hunger <= Sim.SPEC.HUNGER_MAX - Sim.SPEC.ONIGIRI_FOOD) return { type: 'use', slot: slot('onigiri') };
-    // 巻物：部屋に敵が2体以上、またはピンチ
-    if (slot('scroll') >= 0 && room >= 0 && (inRoom.length >= 2 || (low && inRoom.length >= 1))) return { type: 'use', slot: slot('scroll') };
-    // かえんの杖：直線に2体以上、または遠くから撃ってくる相手・ピンチのとき
-    if (slot('fire') >= 0) {
-      let best = null, bestN = 0, bestWorth = false;
-      for (const [dx, dy] of DIRS) {
-        const cells = Sim.fireCells(state, dx, dy);
-        let n = 0, worth = false, risky = false;
-        for (const c of cells) {
-          const e = Sim.enemyAt(state, c.x, c.y);
-          if (!e) continue;
-          if (e.kind === 'bomb') { if (cheb(e, p) === 1 && e.hp <= Sim.SPEC.FIRE_DMG) risky = true; continue; }
-          if (!e.awake) continue;
-          n++;
-          if (e.kind === 'yumi' || e.kind === 'ghost') worth = true;
-        }
-        if (risky || n === 0) continue;
-        if (n > bestN || (n === bestN && worth && !bestWorth)) { best = { dx, dy }; bestN = n; bestWorth = worth; }
+  return true;
+}
+// BFS：(sx,sy) から (tx,ty) への最初の一歩の dir を返す。たどり着けなければ -1。
+function bfsDir(st, sx, sy, tx, ty, avoidEnemies) {
+  if (sx === tx && sy === ty) return -2;
+  const W = st.map.w, H = st.map.h;
+  const prev = new Map();
+  const key = (x, y) => y * W + x;
+  const q = [[sx, sy]];
+  prev.set(key(sx, sy), null);
+  while (q.length) {
+    const [x, y] = q.shift();
+    for (let d = 0; d < 8; d++) {
+      const nx = x + Sim.DIRS[d].dx, ny = y + Sim.DIRS[d].dy;
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+      if (prev.has(key(nx, ny))) continue;
+      if (Sim.tileAt(st, nx, ny) === 0) continue;
+      if (Sim.DIRS[d].dx !== 0 && Sim.DIRS[d].dy !== 0 &&
+          Sim.tileAt(st, x + Sim.DIRS[d].dx, y) === 0 && Sim.tileAt(st, x, y + Sim.DIRS[d].dy) === 0) continue;
+      const isTarget = nx === tx && ny === ty;
+      if (!isTarget) {
+        if (Sim.enemyAt(st, nx, ny)) continue;
+        if (Sim.dekaiTileAt(st, nx, ny)) continue;
+        if (avoidEnemies && st.enemies.some((e) => e.awake && Math.max(Math.abs(e.x - nx), Math.abs(e.y - ny)) <= 1)) continue;
       }
-      if (best && (bestN >= 2 || bestWorth || low)) return { type: 'use', slot: slot('fire'), dx: best.dx, dy: best.dy };
+      prev.set(key(nx, ny), key(x, y));
+      if (isTarget) {
+        // 経路をたどって最初の一歩を返す
+        let cur = key(nx, ny), last = null;
+        while (prev.get(cur) !== null && prev.get(cur) !== undefined) { last = cur; cur = prev.get(cur); if (cur === key(sx, sy)) break; }
+        const fx = last % W, fy = Math.floor(last / W);
+        for (let dd = 0; dd < 8; dd++) if (sx + Sim.DIRS[dd].dx === fx && sy + Sim.DIRS[dd].dy === fy) return dd;
+        return -1;
+      }
+      q.push([nx, ny]);
     }
-    // やくそう：+15がむだにならず、ピンチか、敵が隣にいないとき
-    if (slot('herb') >= 0 && p.hp <= p.maxHp - Sim.SPEC.HERB_HEAL && (low || adj.length === 0)) return { type: 'use', slot: slot('herb') };
-    // ワープの杖：囲まれたとき・ピンチのとき、いちばん元気な隣の敵を飛ばす
-    if (slot('warp') >= 0 && adj.length >= 1 && (low || adj.length >= 2)) {
-      const e = adj.slice().sort((a, b) => b.hp - a.hp)[0];
-      return { type: 'use', slot: slot('warp'), dx: sign(e.x - p.x), dy: sign(e.y - p.y) };
-    }
-    return null;
+  }
+  return -1;
+}
+
+function adjacentEnemyDir(st) {
+  const p = st.player;
+  for (let d = 0; d < 8; d++) {
+    if (Sim.enemyAt(st, p.x + Sim.DIRS[d].dx, p.y + Sim.DIRS[d].dy)) return d;
+  }
+  return -1;
+}
+
+function dekaiNear(st, r) {
+  const d = st.dekai;
+  if (!d || !d.active) return false;
+  return Math.max(Math.abs(d.x - st.player.x), Math.abs(d.y - st.player.y)) <= r;
+}
+
+function fleeDekai(st) {
+  const d = st.dekai, p = st.player;
+  let best = -1, bestScore = -1;
+  for (let dir = 0; dir < 8; dir++) {
+    const nx = p.x + Sim.DIRS[dir].dx, ny = p.y + Sim.DIRS[dir].dy;
+    if (!walkable(st, nx, ny, true)) continue;
+    const score = Math.max(Math.abs(d.x - nx), Math.abs(d.y - ny)) * 10 - Math.abs(st.stairs.x - nx) - Math.abs(st.stairs.y - ny);
+    if (score > bestScore) { bestScore = score; best = dir; }
+  }
+  return best;
+}
+
+function makeBot(kind, seed) {
+  const st = Sim.newGame(seed);
+  let rngState = seed * 7919 + 13;
+  const rnd = () => { rngState = (rngState * 1103515245 + 12345) % 2147483648; return rngState / 2147483648; };
+  return { st, rnd, kind };
+}
+
+function botStep(bot) {
+  const st = bot.st, p = st.player, kind = bot.kind;
+  if (st.over || st.clear) return;
+
+  if (kind === 'random') {
+    const r = bot.rnd();
+    if (r < 0.7) Sim.step(st, { type: 'move', dir: Math.floor(bot.rnd() * 8) });
+    else if (r < 0.85) Sim.step(st, { type: 'attack' });
+    else if (st.inv[0]) Sim.step(st, { type: 'use', index: 0 });
+    else Sim.step(st, { type: 'wait' });
+    if (p.x === st.stairs.x && p.y === st.stairs.y) Sim.step(st, { type: 'descend' });
+    return;
   }
 
-  // 2) 3) 寄り道する：アイテムを全部拾ってから階段へ。隣の敵は叩く。近づいてくる敵は待って先に叩く。
-  function explore(state, mem, useItems) {
-    const p = state.player;
-    if (useItems) { const a = itemAction(state); if (a) { mem.waits = 0; return a; } }
-    const adj = state.enemies.filter((e) => e.kind !== 'bomb' && cheb(e, p) === 1);
-    if (adj.length) {
-      mem.waits = 0;
-      return toward(p, adj.slice().sort((a, b) => a.hp - b.hp)[0]);
-    }
-    // 2マス先まで来た敵は、待てば向こうが隣に来る（こちらが先に叩ける）
-    const dist = Sim.distMap(state, p.x, p.y);
-    const coming = state.enemies.some((e) => e.awake && ((e.kind === 'maru' && dist[e.y * state.map.w + e.x] === 2) || (e.kind === 'ghost' && cheb(e, p) === 2)));
-    if (coming && (mem.waits || 0) < 4) { mem.waits = (mem.waits || 0) + 1; return { type: 'wait' }; }
-    mem.waits = 0;
-    // ゆみへいが気づいているなら、先に追いかける（放っておくと撃たれ続ける）
-    const archer = state.enemies.filter((e) => e.kind === 'yumi' && e.awake && cheb(e, p) <= 4)[0];
-    if (archer && (mem.chase || 0) < 8) {
-      mem.chase = (mem.chase || 0) + 1;
-      const a = stepTo(state, (x, y) => x === archer.x && y === archer.y);
-      if (a) return a;
-    }
-    if (!archer) mem.chase = 0;
-    let a = null;
-    if (p.inv.length < Sim.SPEC.INV_MAX && state.items.length) a = stepTo(state, (x, y) => !!Sim.itemAt(state, x, y) && !(x === p.x && y === p.y));
-    return a || stepTo(state, atStairs(state)) || { type: 'wait' };
+  // デッ怪から逃げる（全ボット共通の安全装置：本体から2マス以上あける）
+  if (dekaiNear(st, 4)) {
+    const d = fleeDekai(st);
+    if (d >= 0) { Sim.step(st, { type: 'move', dir: d }); return; }
   }
-  function noItem(state, mem) { return explore(state, mem, false); }
-  function useItem(state, mem) { return explore(state, mem, true); }
 
-  const BOTS = {
-    random: { name: '何も考えない', fn: random },
-    noItem: { name: 'アイテムを使わない（寄り道）', fn: noItem },
-    useItem: { name: 'アイテムを使う（寄り道）', fn: useItem },
-    direct: { name: '階段直行', fn: direct },
+  // 囲まれて危ないときは1歩引く（smart のみ：通路に引けば同時に叩かれにくい）
+  if (kind === 'smart') {
+    const nearCount = st.enemies.filter((e) => e.awake && Math.max(Math.abs(e.x - p.x), Math.abs(e.y - p.y)) <= 2).length;
+    if (nearCount >= 2 && p.hp < p.maxhp * 0.6) {
+      let bestDir = -1, bestScore = -1;
+      for (let d = 0; d < 8; d++) {
+        const nx = p.x + Sim.DIRS[d].dx, ny = p.y + Sim.DIRS[d].dy;
+        if (!walkable(st, nx, ny, true)) continue;
+        const minDist = Math.min(...st.enemies.filter((e) => e.awake).map((e) => Math.max(Math.abs(e.x - nx), Math.abs(e.y - ny))));
+        if (minDist > bestScore) { bestScore = minDist; bestDir = d; }
+      }
+      if (bestDir >= 0 && bestScore >= 2) { Sim.step(st, { type: 'move', dir: bestDir }); return; }
+    }
+  }
+
+  // ゆみへいの射線上にいて距離があるなら、線を外す1歩を優先（smart のみ）
+  if (kind === 'smart') {
+    const archers = st.enemies.filter((e) => e.awake && e.kind === 'yumiya');
+    for (const a of archers) {
+      const dx = p.x - a.x, dy = p.y - a.y;
+      const cheb = Math.max(Math.abs(dx), Math.abs(dy));
+      if (cheb < 2 || cheb > 5) continue;
+      if (!(dx === 0 || dy === 0 || Math.abs(dx) === Math.abs(dy))) continue;
+      // 今のマスが射線。射線から外れる隣接マスへ
+      let done = false;
+      for (let d = 0; d < 8 && !done; d++) {
+        const nx = p.x + Sim.DIRS[d].dx, ny = p.y + Sim.DIRS[d].dy;
+        if (!walkable(st, nx, ny, true)) continue;
+        const ndx = nx - a.x, ndy = ny - a.y;
+        const inLine = ndx === 0 || ndy === 0 || Math.abs(ndx) === Math.abs(ndy);
+        if (!inLine) { Sim.step(st, { type: 'move', dir: d }); done = true; }
+      }
+      if (done) return;
+    }
+  }
+
+  // 隣接する敵は叩く（一番弱っているものから）
+  const adj = adjacentEnemyDir(st);
+  if (adj >= 0) {
+    let targetDir = adj, lowest = Infinity;
+    for (let d = 0; d < 8; d++) {
+      const e = Sim.enemyAt(st, p.x + Sim.DIRS[d].dx, p.y + Sim.DIRS[d].dy);
+      if (e && e.hp < lowest) { lowest = e.hp; targetDir = d; }
+    }
+    Sim.step(st, { type: 'move', dir: targetDir });
+    return;
+  }
+  if (Sim.dekaiTileAt(st, p.x + Sim.DIRS[p.dir].dx, p.y + Sim.DIRS[p.dir].dy)) {
+    Sim.step(st, { type: 'move', dir: (p.dir + 3) % 8 }); return;
+  }
+
+  if (kind === 'smart') {
+    // 持ち物がいっぱいなら、価値の低い物を投げて空ける（置く代わり）
+    if (st.inv.length >= 15) {
+      const ji = st.inv.findIndex((it) => {
+        const tk = Sim.itemTrueKind(st, it);
+        return (it.kind === 'scroll' && tk !== 'makimodoshi' && tk !== 'shikibetsu') ||
+               (it.kind === 'grass' && tk !== 'yakusou') ||
+               (it.kind === 'wand' && tk !== 'kaen' && tk !== 'kanashibari');
+      });
+      if (ji >= 0) { Sim.step(st, { type: 'throw', index: ji }); return; }
+    }
+    // 装備：より強い武器・盾を持ったら替える
+    for (let i = 0; i < st.inv.length; i++) {
+      const it = st.inv[i];
+      if (it.kind === 'weapon' && Sim.equipPow(it) > Sim.equipPow(p.weapon)) { Sim.step(st, { type: 'equip', index: i }); return; }
+      if (it.kind === 'shield' && Sim.equipPow(it) > Sim.equipPow(p.shield)) { Sim.step(st, { type: 'equip', index: i }); return; }
+    }
+    // 回復待ち：敵が見えず HP が低く、お腹に余裕がある間は足踏みで回復
+    const vis = Sim.visibleSet(st);
+    const enemyVisible = st.enemies.some((e) => e.awake && vis.has(e.y * st.map.w + e.x));
+    if (p.hp < p.maxhp * 0.85 && p.hunger > 25 && !enemyVisible) { Sim.step(st, { type: 'wait' }); return; }
+    // 食べる
+    if (p.hunger < 45) {
+      const i = st.inv.findIndex((it) => it.kind === 'onigiri_big' || it.kind === 'onigiri');
+      if (i >= 0) { Sim.step(st, { type: 'use', index: i }); return; }
+    }
+    // 部屋に敵が3体以上起きていたら まきもどし
+    {
+      const pr = Sim.roomAt(st, p.x, p.y);
+      const inRoom = st.enemies.filter((e) => e.awake && Sim.roomAt(st, e.x, e.y) === pr && pr >= 0);
+      if (inRoom.length >= 3) {
+        const i = st.inv.findIndex((it) => it.kind === 'scroll' && Sim.itemTrueKind(st, it) === 'makimodoshi');
+        if (i >= 0) { Sim.step(st, { type: 'use', index: i }); return; }
+      }
+    }
+    // 速い・固い敵が一直線にいたら かなしばり の杖／ねむり草を投げる
+    {
+      const visE = st.enemies.filter((e) => e.awake);
+      for (const e of visE) {
+        const dx = e.x - p.x, dy = e.y - p.y;
+        const cheb = Math.max(Math.abs(dx), Math.abs(dy));
+        if (cheb < 2 || cheb > 5) continue;
+        if (!(dx === 0 || dy === 0 || Math.abs(dx) === Math.abs(dy))) continue;
+        const strong = e.speed === 2 || e.def >= 5 || e.kind === 'ganko';
+        if (!strong) continue;
+        p.dir = Sim.DIRS.findIndex((d) => d.dx === Math.sign(dx) && d.dy === Math.sign(dy));
+        const wi = st.inv.findIndex((it) => it.kind === 'wand' && Sim.itemTrueKind(st, it) === 'kanashibari');
+        if (wi >= 0) { Sim.step(st, { type: 'use', index: wi }); return; }
+        const gi = st.inv.findIndex((it) => it.kind === 'grass' && Sim.itemTrueKind(st, it) === 'nemuri');
+        if (gi >= 0) { Sim.step(st, { type: 'throw', index: gi }); return; }
+      }
+    }
+    // 危ないときは やくそう
+    if (p.hp < p.maxhp * 0.35) {
+      const i = st.inv.findIndex((it) => it.kind === 'grass' && Sim.itemTrueKind(st, it) === 'yakusou');
+      if (i >= 0) { Sim.step(st, { type: 'use', index: i }); return; }
+    }
+    // 固い敵に かえん の杖（一直線にいるとき）
+    const tough = st.enemies.find((e) => e.awake && e.def >= 5);
+    if (tough) {
+      const dx = tough.x - p.x, dy = tough.y - p.y;
+      if ((dx === 0 || dy === 0 || Math.abs(dx) === Math.abs(dy)) && Math.max(Math.abs(dx), Math.abs(dy)) <= 8) {
+        const i = st.inv.findIndex((it) => it.kind === 'wand' && Sim.itemTrueKind(st, it) === 'kaen');
+        if (i >= 0) {
+          p.dir = Sim.DIRS.findIndex((d) => d.dx === Math.sign(dx) && d.dy === Math.sign(dy));
+          Sim.step(st, { type: 'use', index: i });
+          return;
+        }
+      }
+    }
+  }
+
+  // 行き先：rush と noitem は階段直行／smart は装備→未探索の部屋→階段
+  let target = st.stairs;
+  if (kind === 'smart') {
+    const gear = st.items.filter((it) =>
+      (it.kind === 'weapon' && Sim.equipPow(it) > Sim.equipPow(p.weapon)) ||
+      (it.kind === 'shield' && Sim.equipPow(it) > Sim.equipPow(p.shield)))
+      .sort((a, b) => (Math.abs(a.x - p.x) + Math.abs(a.y - p.y)) - (Math.abs(b.x - p.x) + Math.abs(b.y - p.y)))[0];
+    if (gear) target = { x: gear.x, y: gear.y };
+    else {
+      const unvisited = st.map.rooms.find((r) => !st.explored[r.cy * st.map.w + r.cx]);
+      if (unvisited) target = { x: unvisited.cx, y: unvisited.cy };
+    }
+  }
+  if (p.x === st.stairs.x && p.y === st.stairs.y) { Sim.step(st, { type: 'descend' }); return; }
+  let dir = bfsDir(st, p.x, p.y, target.x, target.y, kind === 'rush');
+  if (dir === -2) { Sim.step(st, { type: 'wait' }); return; }
+  if (dir === -1) {
+    // 敵が道をふさいでいる等：階段に一番近い敵へ向かう
+    const near = st.enemies.slice().sort((a, b) =>
+      (Math.abs(a.x - st.stairs.x) + Math.abs(a.y - st.stairs.y)) - (Math.abs(b.x - st.stairs.x) + Math.abs(b.y - st.stairs.y)))[0];
+    if (near) dir = bfsDir(st, p.x, p.y, near.x, near.y, false);
+  }
+  if (dir >= 0) Sim.step(st, { type: 'move', dir });
+  else Sim.step(st, { type: 'wait' });
+}
+
+function runBot(kind, seed, maxTurns) {
+  const bot = makeBot(kind, seed);
+  const st = bot.st;
+  let dekaiFloorDeath = false;
+  for (let i = 0; i < (maxTurns || 4000); i++) {
+    botStep(bot);
+    if (st.over) { dekaiFloorDeath = st.floor === Sim.SPEC.DEKAI_FLOOR; break; }
+    if (st.clear) break;
+  }
+  return {
+    kind, seed,
+    result: st.clear ? 'clear' : st.over ? 'dead' : 'timeout',
+    floor: st.floor, turns: st.turn, cause: st.deathCause || '',
+    dekaiFloorDeath, level: st.player.level, kills: st.stats.kills,
   };
+}
 
-  // 1回ぶん遊ばせる
-  function runOne(key, seed, maxTurns) {
-    const state = Sim.create(seed), mem = { rng: seed >>> 0 };
-    const bot = BOTS[key].fn;
-    let refused = 0, minHunger = state.player.hunger;
-    const floorTurns = [];
-    let lastFloor = 1, lastTurn = 0;
-    while (!state.over && state.turn < maxTurns) {
-      const before = state.turn;
-      let a = bot(state, mem);
-      if (refused >= 3) a = { type: 'wait' };
-      Sim.step(state, a);
-      refused = state.turn === before && !state.over ? refused + 1 : 0;
-      if (state.player.hunger < minHunger) minHunger = state.player.hunger;
-      if (state.floor !== lastFloor) { floorTurns.push(state.turn - lastTurn); lastTurn = state.turn; lastFloor = state.floor; }
+if (require.main === module) {
+  const n = parseInt(process.argv[2] || '30', 10);
+  for (const kind of ['random', 'noitem', 'smart', 'rush']) {
+    let clear = 0, dead = 0, timeout = 0, dekaiDeaths = 0;
+    const causes = {};
+    for (let s = 1; s <= n; s++) {
+      const r = runBot(kind, 1000 + s * 37);
+      if (r.result === 'clear') clear++;
+      else if (r.result === 'dead') { dead++; causes[r.cause] = (causes[r.cause] || 0) + 1; }
+      else timeout++;
+      if (r.dekaiFloorDeath) dekaiDeaths++;
     }
-    const used = state.stats.used;
-    return {
-      seed, result: state.over || 'timeout', floor: state.floor, turns: state.turn,
-      lv: state.player.lv, hp: state.player.hp, hunger: state.player.hunger, minHunger,
-      hungerZero: state.stats.hungerZero, kills: state.stats.kills, dmgTaken: state.stats.dmgTaken,
-      used, usedTotal: Object.keys(used).reduce((s, k) => s + used[k], 0), thrown: state.stats.thrown,
-      left: state.player.inv.length,
-      cause: state.over === 'dead' ? Sim.causeText(state.cause).replace(/^\dFで /, '') : null,
-    };
-  }
-
-  function summarize(key, runs) {
-    const n = runs.length;
-    const avg = (f) => runs.reduce((s, r) => s + f(r), 0) / n;
-    const clears = runs.filter((r) => r.result === 'clear');
-    const deaths = runs.filter((r) => r.result === 'dead');
-    const causes = {}, deathFloor = [0, 0, 0, 0, 0, 0];
-    for (const r of deaths) { causes[r.cause] = (causes[r.cause] || 0) + 1; deathFloor[r.floor]++; }
-    const usedKinds = {};
-    for (const r of runs) for (const k of Object.keys(r.used)) usedKinds[k] = (usedKinds[k] || 0) + r.used[k];
-    return {
-      key, name: BOTS[key].name, n,
-      clear: clears.length, dead: deaths.length, timeout: n - clears.length - deaths.length,
-      clearRate: clears.length / n,
-      avgFloor: avg((r) => r.floor), avgTurns: avg((r) => r.turns), avgLv: avg((r) => r.lv),
-      avgTurnsClear: clears.length ? clears.reduce((s, r) => s + r.turns, 0) / clears.length : 0,
-      avgHpClear: clears.length ? clears.reduce((s, r) => s + r.hp, 0) / clears.length : 0,
-      avgLvClear: clears.length ? clears.reduce((s, r) => s + r.lv, 0) / clears.length : 0,
-      avgUsed: avg((r) => r.usedTotal), avgThrown: avg((r) => r.thrown), avgLeft: avg((r) => r.left),
-      avgKills: avg((r) => r.kills), avgDmg: avg((r) => r.dmgTaken),
-      hungerZeroRuns: runs.filter((r) => r.hungerZero).length,
-      avgMinHunger: avg((r) => r.minHunger),
-      causes, deathFloor: deathFloor.slice(1), usedKinds,
-    };
-  }
-
-  return { BOTS, runOne, summarize, random, noItem, useItem, direct, itemAction };
-});
-
-// ---- Node から直接実行したとき：4種を同じseedで回して、表を出す --------------
-if (typeof module === 'object' && module.exports && require.main === module) {
-  const Bots = module.exports;
-  const Sim = require('./sim.js');
-  const N = parseInt(process.argv[2] || '500', 10);
-  const seed0 = parseInt(process.argv[3] || '1', 10);
-  const MAX_TURNS = 3000;
-  const pct = (v) => (v * 100).toFixed(1) + '%';
-  const f1 = (v) => v.toFixed(1);
-  const sums = [];
-  for (const key of Object.keys(Bots.BOTS)) {
-    const runs = [];
-    for (let i = 0; i < N; i++) runs.push(Bots.runOne(key, seed0 + i, MAX_TURNS));
-    sums.push(Bots.summarize(key, runs));
-  }
-  console.log('ボット検証：各 ' + N + ' 回（seed ' + seed0 + '〜' + (seed0 + N - 1) + '、1回の上限 ' + MAX_TURNS + ' 手）\n');
-  console.log('| ボット | クリア率 | 死亡 | 時間切れ | 平均到達フロア | 平均手数 | クリア時の手数 | クリア時の体力 | 終了時レベル | 使ったアイテム数 | 倒した敵 | 受けたダメージ |');
-  console.log('|---|---|---|---|---|---|---|---|---|---|---|---|');
-  for (const s of sums) {
-    console.log('| ' + [s.name, pct(s.clearRate) + '（' + s.clear + '）', s.dead, s.timeout, f1(s.avgFloor), f1(s.avgTurns), f1(s.avgTurnsClear), f1(s.avgHpClear), f1(s.avgLv), f1(s.avgUsed), f1(s.avgKills), f1(s.avgDmg)].join(' | ') + ' |');
-  }
-  console.log('\n死んだフロアの内訳（1F〜5F）と、多い死因');
-  console.log('| ボット | 1F | 2F | 3F | 4F | 5F | 多い死因（上位3つ） |');
-  console.log('|---|---|---|---|---|---|---|');
-  for (const s of sums) {
-    const top = Object.keys(s.causes).sort((a, b) => s.causes[b] - s.causes[a]).slice(0, 3).map((c) => c + ' ' + s.causes[c]).join('／');
-    console.log('| ' + [s.name].concat(s.deathFloor).concat([top || 'なし']).join(' | ') + ' |');
-  }
-  console.log('\n満腹度とアイテムの使われ方');
-  console.log('| ボット | 満腹度が0になった回数 | 満腹度の最低値（平均） | 使った内訳（' + N + '回の合計） | 投げた数（平均） | 使わずに残った数（平均） |');
-  console.log('|---|---|---|---|---|---|');
-  for (const s of sums) {
-    const kinds = Object.keys(Sim.ITEMS).map((k) => Sim.ITEMS[k].name + ' ' + (s.usedKinds[k] || 0)).join('／');
-    console.log('| ' + [s.name, s.hungerZeroRuns, f1(s.avgMinHunger), kinds, f1(s.avgThrown), f1(s.avgLeft)].join(' | ') + ' |');
+    const top = Object.entries(causes).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => k + '×' + v).join('、');
+    console.log(kind + ': クリア ' + (clear / n * 100).toFixed(1) + '% 死 ' + dead + ' 時間切れ ' + timeout + ' デッ怪フロア死 ' + dekaiDeaths + (top ? '（主な死因：' + top + '）' : ''));
   }
 }
+module.exports = { runBot };
