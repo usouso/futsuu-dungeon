@@ -468,8 +468,10 @@ return ev;
 }
 if (p.paralyze > 0) { p.paralyze--; endTurn(st, ev); markExplored(st); return ev;}
 
+let consumed = true;
 switch (action.type) {
-case 'move': doMove(st, ev, action.dir); break;
+case 'move': consumed = doMove(st, ev, action.dir) !== false; break;
+case 'face': p.dir = action.dir; ev.push({ t: 'face'}); consumed = false; break;
 case 'attack': doAttack(st, ev); break;
 case 'wait': ev.push({ t: 'msg', s: '足踏みした。'}); break;
 case 'use': doUse(st, ev, action.index, action.target); break;
@@ -478,7 +480,7 @@ case 'equip': doEquip(st, ev, action.index); break;
 case 'descend': doDescend(st, ev); break;
 default: break;
 }
-if (!st.over &&!st.clear) endTurn(st, ev);
+if (consumed &&!st.over &&!st.clear) endTurn(st, ev);
 markExplored(st);
 return ev;
 }
@@ -491,11 +493,11 @@ const nx = p.x + d.dx, ny = p.y + d.dy;
 if (d.dx!== 0 && d.dy!== 0) {
 if (tileAt(st, p.x + d.dx, p.y) === 0 && tileAt(st, p.x, p.y + d.dy) === 0) {
 ev.push({ t: 'msg', s: '角の両側が壁で、すり抜けられない。'});
-return;
+return false; // 向きだけ変えた（ターンは進まない）
 }
 }
-if (enemyAt(st, nx, ny) || dekaiTileAt(st, nx, ny)) { doAttack(st, ev); return;}
-if (tileAt(st, nx, ny) === 0) { ev.push({ t: 'msg', s: '壁がある。'}); return;}
+if (enemyAt(st, nx, ny) || dekaiTileAt(st, nx, ny)) { doAttack(st, ev); return true;}
+if (tileAt(st, nx, ny) === 0) { ev.push({ t: 'face'}); return false;} // 壁に向いただけ（ターンは進まない）
 p.x = nx; p.y = ny;
 ev.push({ t: 'move'});
 const idx = st.items.findIndex((i) => i.x === nx && i.y === ny);
