@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>ふつうのダンジョン（試作）</title>
+<title>ふつうのダンジョン（シレン6寄せ・作り直し試作）</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -13,7 +13,13 @@
       <span class="chip" id="hud-floor">1F／5F</span>
       <span class="chip" id="hud-lv"><span id="hud-lv-text">Lv 1</span><span class="xpbar"><span id="xp-fill"></span></span></span>
       <span class="chip" id="hud-atk">攻撃 4</span>
+      <span class="chip" id="hud-str">ちから 8/8</span>
+      <span class="chip" id="hud-dosukoi" hidden>ドスコイ！</span>
       <button type="button" id="btn-settings">せってい</button>
+    </div>
+    <div class="hud-row">
+      <span class="chip eq" id="hud-weapon">武器：なし</span>
+      <span class="chip eq" id="hud-shield">盾：なし</span>
     </div>
     <div class="hud-row">
       <div class="meter" id="m-hp">
@@ -31,6 +37,7 @@
 
   <main id="stage">
     <canvas id="map" aria-label="ダンジョンの地図"></canvas>
+    <canvas id="minimap" aria-label="ミニマップ"></canvas>
     <div id="banner" hidden></div>
   </main>
 
@@ -46,11 +53,15 @@
   </section>
 
   <section id="controls">
-    <button type="button" id="btn-attack" disabled>
+    <button type="button" id="btn-attack">
       <span class="attack-word">こうげき</span>
       <span id="attack-target"></span>
     </button>
     <div id="dpad"></div>
+  </section>
+  <section id="subcontrols">
+    <button type="button" id="btn-descend" disabled>階段を降りる</button>
+    <button type="button" id="btn-dash">ダッシュ：オフ</button>
   </section>
 </div>
 
@@ -105,7 +116,6 @@
 </div>
 
 <script src="sim.js"></script>
-<script src="bots.js"></script>
 <script src="audio.js"></script>
 <script src="keys.js"></script>
 <script src="ui.js"></script>

@@ -210,6 +210,40 @@ button:disabled { cursor: default; }
   .fill { transition: none; }
 }
 
+/* ---- 作り直し版の追加分 ---- */
+#stage { width: min(94vw, 560px); }
+#map { width: 100%; height: min(42vh, 430px); }
+#log { overflow-y: auto; height: 58px; }
+#log div { white-space: normal; overflow-wrap: anywhere; }
+.hud-row { flex-wrap: wrap; }
+#itemrow button:disabled { opacity: 0.45; }
+@media (min-width: 900px) {
+  #stage { width: 560px; }
+  #subcontrols { grid-column: 2; }
+}
+#minimap {
+  position: absolute; top: 6px; right: 6px;
+  width: 126px; height: 90px;
+  border: 2px solid #57607a; border-radius: 6px;
+  background: #0b0e16; opacity: 0.92;
+}
+.chip.eq { font-size: 13px; }
+#hud-dosukoi { background: #ff9800; color: #14161f; font-weight: 700; }
+#inv { display: flex; flex-wrap: wrap; gap: 6px; min-height: 34px; }
+.inv-item {
+  font-size: 14px; padding: 6px 10px; border-radius: 8px;
+  background: #2a3049; color: #eef1f8; border: 2px solid transparent;
+}
+.inv-item.sel { border-color: #ffd54f; background: #3d4666; }
+.inv-empty { color: #9aa3b8; font-size: 14px; padding: 6px 2px; }
+#subcontrols { display: flex; gap: 8px; }
+#subcontrols button {
+  flex: 1; font-size: 15px; padding: 10px;
+  border-radius: 8px; background: #2a3049; color: #eef1f8; border: none;
+}
+#subcontrols button:disabled { opacity: 0.45; }
+#subcontrols button:active { background: #3d4666; }
+
 /* ---- PC（横に広い画面）：地図を左、表示と操作を右に ---- */
 @media (min-width: 900px) {
   #app {
